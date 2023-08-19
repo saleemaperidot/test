@@ -11,6 +11,8 @@ import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:share/share.dart';
+import 'package:testapp/data.dart';
+import 'package:testapp/file_listing_screen.dart';
 //import 'package:share_plus/share_plus.dart';
 
 void main() async {
@@ -50,10 +52,13 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
+  ValueNotifier _notifier = ValueNotifier(0);
+  int progress = 0;
+  int itemindex = 0;
   String url =
       "https://img.freepik.com/free-vector/tropical-plant-transparent-background_1308-75692.jpg";
   ReceivePort _port = ReceivePort();
-  int progress = 0;
+  // int progress = 0;
   @override
   void initState() {
     super.initState();
@@ -61,16 +66,15 @@ class _MyHomePageState extends State<MyHomePage> {
     IsolateNameServer.registerPortWithName(
         _port.sendPort, 'downloader_send_port');
     _port.listen((dynamic data) {
-      String id = data[0];
-      DownloadTaskStatus status = DownloadTaskStatus(data[1]);
-
       setState(() {
-        progress = data[2];
-      });
+        String id = data[0];
+        DownloadTaskStatus status = DownloadTaskStatus(data[1]);
 
-      Get.showSnackbar(GetSnackBar(
-        title: "completed",
-      ));
+        progress = data[2];
+        print("progress$progress");
+
+        _notifier.value = progress;
+      });
     });
 
     FlutterDownloader.registerCallback(downloadCallback);
@@ -95,42 +99,65 @@ class _MyHomePageState extends State<MyHomePage> {
       body: SafeArea(
           child: Column(
         children: [
-          Stack(children: [
-            Image(
-              image: NetworkImage(url),
-            ),
-            IconButton(
-                onPressed: () {
-                  Get.bottomSheet(BottomSheet(
-                    onClosing: () {
-                      Get.back();
-                    },
-                    builder: (context) {
-                      return Container(
-                        child: Column(
-                          children: [
-                            ElevatedButton(
-                                onPressed: () {
-                                  // download(url: url);
-                                  newdownloadtask(url: url);
-                                },
-                                child: Text("download")),
-                            ElevatedButton(
-                                onPressed: () async {
-                                  Share.share(url);
-                                },
-                                child: Text("share"))
-                          ],
-                        ),
-                      );
-                    },
-                  ));
-                },
-                icon: Icon(Icons.menu))
-          ]),
           LinearProgressIndicator(
-            value: progress.toDouble(),
+            valueColor: new AlwaysStoppedAnimation<Color>(Colors.red),
+            value: progress / 100,
           ),
+          ValueListenableBuilder(
+            valueListenable: _notifier,
+            builder: (context, value, _) {
+              return Text("downloding....$progress");
+            },
+          ),
+          Expanded(
+              child: ListView.separated(
+                  itemBuilder: (context, index) {
+                    final data = dataList[index];
+                    return InkWell(
+                      onTap: () {
+                        // newdownloadtask(url: data['url']!);
+                      },
+                      child: Card(
+                        child: ListTile(
+                            title: Text(data['title']!),
+                            trailing: Container(
+                              width: 150,
+                              child: Row(
+                                children: [
+                                  itemindex == index
+                                      ? CircularProgressIndicator(
+                                          strokeWidth: 4,
+                                          value: progress / 100,
+                                        )
+                                      : SizedBox(),
+                                  IconButton(
+                                    icon: Icon(Icons.download),
+                                    onPressed: () {
+                                      setState(() {
+                                        itemindex = index;
+                                      });
+
+                                      newdownloadtask(url: data['url']!);
+                                    },
+                                  ),
+                                  IconButton(
+                                    icon: Icon(Icons.share),
+                                    onPressed: () {
+                                      Share.share(data['url']!);
+                                    },
+                                  ),
+                                ],
+                              ),
+                            )),
+                      ),
+                    );
+                  },
+                  separatorBuilder: (context, index) {
+                    return SizedBox(
+                      height: 15,
+                    );
+                  },
+                  itemCount: dataList.length))
         ],
       )),
     );
@@ -166,12 +193,12 @@ class _MyHomePageState extends State<MyHomePage> {
   void newdownloadtask({required String url}) async {
     bool hasPermission = await _requestWritePermission();
     if (!hasPermission) return;
-    final externaldir = await getExternalStorageDirectory();
+    final externaldir = await getApplicationDocumentsDirectory();
     final taskId = await FlutterDownloader.enqueue(
       url: url,
       headers: {}, // optional: header send with url (auth token etc)
-      savedDir: externaldir!.path,
-      fileName: 'downloads',
+      savedDir: externaldir.path,
+      saveInPublicStorage: true,
       showNotification:
           true, // show download progress in status bar (for Android)
       openFileFromNotification:
