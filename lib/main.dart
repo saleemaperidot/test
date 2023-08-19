@@ -1,12 +1,28 @@
+import 'dart:isolate';
+import 'dart:typed_data';
+import 'dart:ui';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_downloader/flutter_downloader.dart';
 import 'package:get/get.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:share/share.dart';
+//import 'package:share_plus/share_plus.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Plugin must be initialized before using
+  await FlutterDownloader.initialize(
+      debug:
+          true, // optional: set to false to disable printing logs to console (default: true)
+      ignoreSsl:
+          true // option: set to false to disable working with http links (default: false)
+      );
   runApp(const MyApp());
 }
 
@@ -26,10 +42,53 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MyHomePage extends StatelessWidget {
+class MyHomePage extends StatefulWidget {
   MyHomePage({super.key});
+
+  @override
+  State<MyHomePage> createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
   String url =
       "https://img.freepik.com/free-vector/tropical-plant-transparent-background_1308-75692.jpg";
+  ReceivePort _port = ReceivePort();
+  int progress = 0;
+  @override
+  void initState() {
+    super.initState();
+
+    IsolateNameServer.registerPortWithName(
+        _port.sendPort, 'downloader_send_port');
+    _port.listen((dynamic data) {
+      String id = data[0];
+      DownloadTaskStatus status = DownloadTaskStatus(data[1]);
+
+      setState(() {
+        progress = data[2];
+      });
+
+      Get.showSnackbar(GetSnackBar(
+        title: "completed",
+      ));
+    });
+
+    FlutterDownloader.registerCallback(downloadCallback);
+  }
+
+  @override
+  void dispose() {
+    IsolateNameServer.removePortNameMapping('downloader_send_port');
+    super.dispose();
+  }
+
+  @pragma('vm:entry-point')
+  static void downloadCallback(String id, int status, int progress) {
+    final SendPort? send =
+        IsolateNameServer.lookupPortByName('downloader_send_port');
+    send!.send([id, status, progress]);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,20 +111,13 @@ class MyHomePage extends StatelessWidget {
                           children: [
                             ElevatedButton(
                                 onPressed: () {
-                                  download(url: url);
+                                  // download(url: url);
+                                  newdownloadtask(url: url);
                                 },
                                 child: Text("download")),
                             ElevatedButton(
                                 onPressed: () async {
-                                  final result = await Share.shareXFiles(
-                                      [XFile(url)],
-                                      text: 'picture');
-                                  if (result.status ==
-                                      ShareResultStatus.dismissed) {
-                                    print('Did you not like the pictures?');
-                                  } else {
-                                    print("picture shared");
-                                  }
+                                  Share.share(url);
                                 },
                                 child: Text("share"))
                           ],
@@ -76,6 +128,9 @@ class MyHomePage extends StatelessWidget {
                 },
                 icon: Icon(Icons.menu))
           ]),
+          LinearProgressIndicator(
+            value: progress.toDouble(),
+          ),
         ],
       )),
     );
@@ -100,9 +155,27 @@ class MyHomePage extends StatelessWidget {
 
     // downloads the file
     Dio dio = Dio();
-    await dio.download(url, "${dir.path}/$fileName");
+    final result = await dio.download(url, "${dir.path}/$fileName");
+    //print();
+    final resultd = await ImageGallerySaver.saveFile(result.data);
 
     // opens the file
-    OpenFile.open("${dir.path}/$fileName", type: 'application/pdf');
+    OpenFile.open("${dir.path}/$fileName", type: 'application/image');
+  }
+
+  void newdownloadtask({required String url}) async {
+    bool hasPermission = await _requestWritePermission();
+    if (!hasPermission) return;
+    final externaldir = await getExternalStorageDirectory();
+    final taskId = await FlutterDownloader.enqueue(
+      url: url,
+      headers: {}, // optional: header send with url (auth token etc)
+      savedDir: externaldir!.path,
+      fileName: 'downloads',
+      showNotification:
+          true, // show download progress in status bar (for Android)
+      openFileFromNotification:
+          true, // click on notification to open downloaded file (for Android)
+    );
   }
 }
